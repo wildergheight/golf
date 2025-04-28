@@ -1,5 +1,8 @@
 #include <Arduino.h>
 #include <Servo.h>
+#include "sms812.h"
+#include "Ultrasonic.h"
+#include "arduinoFFT.h"
 
 // Define the LED pin
 const int led = 25;  // Pico's built-in LED
@@ -34,6 +37,12 @@ const int servo = 8;
 const int beam_data = 9;
 const int beam_data2 = 10; //Not Used
 
+//ultrasonic Sensor
+Ultrasonic ultrasonic(10);
+
+//Dist Sensor
+const int dist_data = 26;
+
 //Extra
 const int gp17 = 17;
 const int gp16 = 16;
@@ -42,7 +51,7 @@ const int gp19 = 19;
 const int gp20 = 20;
 const int gp21 = 21;
 const int gp22 = 22;
-const int gp26 = 26;
+// const int gp26 = 26;
 const int gp27 = 27;
 
 //beam states
@@ -51,6 +60,11 @@ int sensorState = 0, lastState=0;
 //initial button states
 int start_flag = 1;
 int kill_motor_flag = 1;
+int main_button = 1;
+unsigned long lastServoTime = 0;
+
+//distance sensor init
+// SharpDistSensor mySensor(GP2Y0A41SK0F, dist_data);
 
 void initializeRelays(){
   pinMode(relay1, OUTPUT);
@@ -65,6 +79,16 @@ void initializeRelays(){
   digitalWrite(relay2, HIGH);
   sleep_ms(100);
   digitalWrite(relay2, LOW);
+}
+
+void cycleRelays(){
+  digitalWrite(relay2, HIGH);
+  sleep_ms(500);
+  digitalWrite(relay2, LOW);
+  sleep_ms(500);
+  digitalWrite(relay1, HIGH);
+  sleep_ms(500);
+  digitalWrite(relay1, LOW);
 }
 
 void initializeMotor(){
@@ -94,7 +118,32 @@ void initializeBuck(){
 
 void initializeBeam(){
   pinMode(beam_data, INPUT_PULLUP);
+  pinMode(beam_data2, INPUT_PULLUP);
   // digitalWrite(beam_data, HIGH); // turn on the pullup
+}
+
+void initializeUltrasonic(){
+  // Initialize the distance sensor
+  // mySensor.begin();
+  pinMode(beam_data2, INPUT_PULLUP);
+}
+
+bool ballRequested(){
+    int sensorValue = analogRead(dist_data);  // Read raw ADC value
+    float voltage = sensorValue * (3.3 / 1023.0);  // Convert to voltage (assuming 10-bit ADC)
+    
+    // Convert voltage to distance using the sensor's characteristic curve (datasheet)
+    float distance = 27.86 / (voltage - 0.42); // Example formula, may need adjustment
+    
+    if (distance > 5 && distance <= 15) {  // Typical range for GP2Y0A41SK0F is 4-30 cm
+      Serial.print("Distance: ");
+      Serial.print(distance);
+      Serial.println(" cm");
+      return true;
+    } else {
+      Serial.println("Out of range");
+      return false;
+    }  
 }
 
 void initializeLED(){
@@ -109,6 +158,7 @@ void initializeServo(){
 void initializeButtonBox(){
   pinMode(start_button, INPUT_PULLUP);
   pinMode(kill_motor_button, INPUT_PULLUP);
+  pinMode(gp21, INPUT_PULLUP);
   pinMode(beam_breakLED, OUTPUT);
   pinMode(pico_readyLED, OUTPUT);
 
@@ -135,12 +185,30 @@ void stopMotor(){
   analogWrite(motorPWM, 0);
 }
 
+void smoothServoMove(Servo &servo, int startAngle, int endAngle, int stepDelay) {
+  if (startAngle < endAngle) {
+    for (int angle = startAngle; angle <= endAngle; angle++) {
+      servo.write(angle);
+      delay(stepDelay);  // Delay between each step
+    }
+  } else {
+    for (int angle = startAngle; angle >= endAngle; angle--) {
+      servo.write(angle);
+      delay(stepDelay);  // Delay between each step
+    }
+  }
+}
+
 void servoRelease(){
-  myservo.write(45);
+  // myservo.write(45);
+  int currentAngle = myservo.read();  // Get the current position of the servo
+  smoothServoMove(myservo, currentAngle, 40, 10);  // Move smoothly to 45 degrees
 }
 
 void servoArm(){
-  myservo.write(80);
+  // myservo.write(80);
+  int currentAngle = myservo.read();  // Get the current position of the servo
+  smoothServoMove(myservo, currentAngle, 80, 10);  // Move smoothly to 80 degrees
 }
 
 void servoCycleBall(){
@@ -150,12 +218,46 @@ void servoCycleBall(){
   delay(1000);
 }
 
-bool isGolfBall(){
-  sensorState = digitalRead(beam_data);
+bool isKillMotor(){
+  sensorState = digitalRead(kill_motor_button);
   if (sensorState == LOW) {     
     return true;
   } 
   else{
+    return false;
+  }
+}
+
+bool isStart(){
+  sensorState = digitalRead(start_button);
+  if (sensorState == LOW) {     
+    return true;
+  } 
+  else{
+    return false;
+  }
+}
+
+bool isGolfBall(){
+  // sensorState = digitalRead(beam_data);
+  // sensorState = digitalRead(beam_data2);
+  // if (sensorState == LOW) {     
+  //   digitalWrite(beam_breakLED, HIGH);
+  //   return true;
+  // } 
+  // else{
+  //   digitalWrite(beam_breakLED, LOW);
+  //   return false;
+  // }
+
+  long RangeInCentimeters;
+  RangeInCentimeters = ultrasonic.read();
+  if (RangeInCentimeters > 0 && RangeInCentimeters <=4){
+    digitalWrite(beam_breakLED, HIGH);
+    return true;
+  }
+  else{
+    digitalWrite(beam_breakLED, LOW);
     return false;
   }
   // // read the state of the pushbutton value:
@@ -180,33 +282,62 @@ bool isGolfBall(){
   // lastState = sensorState;
 }
 
+bool isServoButton(){     //Remove when confirmed not needed
+  sensorState = digitalRead(gp21);
+  if (sensorState == LOW) {     
+    return true;
+  } 
+  else{
+    return false;
+  }
+}
+
+void testDistance(){
+  while(1){
+    if (ballRequested()){
+      digitalWrite(led, HIGH);
+    }
+    else{
+      digitalWrite(led, LOW);
+    }
+    delay(20);
+  }
+}
+
 void setup() {
   // Start serial communication
   Serial.begin(115200);
+  // while (!Serial && millis() < 10000UL);
+  // Serial.println("started");
   initializeRelays();
   initializeMotor();
   initializeBuck();
-  initializeBeam();
+  // initializeBeam();
+  initializeUltrasonic();
   initializeServo();
   initializeLED();
   initializeButtonBox();
   servoArm();
 
-  
-
-  blinkLED(4, 200);
+  // blinkLED(4, 200);
   Serial.println("Setup Complete");
 
   digitalWrite(pico_readyLED, HIGH);
-  Serial.println(start_flag);
-  while(start_flag!=0){
+  while(!isStart()){
     delay(20);
-    start_flag = digitalRead(start_button);
-    Serial.println(start_flag);
+    Serial.println("Waiting for Start Button");
+    main_button = digitalRead(gp21);
+    blinkLED(4, 50);
+    // Serial.println(main_button);
+    // start_flag = digitalRead(start_button);
+    // Serial.println(start_flag);
   }
+  Serial.println("Button Pressed. Starting Motor");
   runMotor(1);
-  start_flag = 0;
+  // start_flag = 0;
   delay(1000);
+
+  // testDistance();
 }
 
 
@@ -214,31 +345,60 @@ void setup() {
 void loop() {
   
   if (isGolfBall()){
-    digitalWrite(beam_breakLED, HIGH);
     stopMotor();
 
   }
   else{
-    digitalWrite(beam_breakLED, LOW);
     runMotor(1);
   }
   
   
-  if (kill_motor_flag == 0 && isGolfBall()){
-    servoCycleBall();
+  // Check if a ball is requested and enough time has passed since last servo cycle
+  if (ballRequested()) {  // && isGolfBall()
+      unsigned long currentMillis = millis(); // Get current time
+      if (currentMillis - lastServoTime >= 3000) { // Check if 3 seconds have passed
+          digitalWrite(pico_readyLED, LOW);
+          servoCycleBall();
+          lastServoTime = currentMillis; // Update last execution time
+          digitalWrite(pico_readyLED, HIGH);
+      }
   }
 
-  if (start_flag == 0){
+  if (isKillMotor()){
+    // cycleRelays();    //Run in seperate thread eventually so it doesn't prevent servo cycle
+
+    stopMotor();
     delay(1000);
-    start_flag = 1;
-    while (start_flag == 1){
-      start_flag = digitalRead(start_button);
+    while (!isKillMotor()){
+      // kill_motor_flag = digitalRead(kill_motor_button);
+      if (ballRequested()){
+        digitalWrite(pico_readyLED, LOW);
+        servoCycleBall();
+        digitalWrite(pico_readyLED, HIGH);
+      }
       delay(20);
     }
-    delay(400);
+    digitalWrite(pico_readyLED, LOW); //delay to prevent button bounce back into this loop
+    delay(2000);
+    digitalWrite(pico_readyLED, HIGH);
+  }
+
+  if (isStart()){
+    stopMotor();
+    delay(1000);
+    while (!isStart()){
+      // start_flag = digitalRead(start_button);
+      isGolfBall();
+      delay(20);
+      blinkLED(4, 50);
+    }
+    digitalWrite(pico_readyLED, LOW); //delay to prevent button bounce back into this loop
+    delay(2000);
+    digitalWrite(pico_readyLED, HIGH);
   }
   
   delay(20);
-  kill_motor_flag = digitalRead(kill_motor_button);
-  start_flag = digitalRead(start_button);
+  // kill_motor_flag = digitalRead(kill_motor_button);
+  // start_flag = digitalRead(start_button);
+  
 }

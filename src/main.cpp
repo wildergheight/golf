@@ -4,6 +4,17 @@
 #include "Ultrasonic.h"
 #include "arduinoFFT.h"
 
+// FFT Definitions and Constants
+#define SAMPLES 64             
+#define SAMPLING_FREQ 10000    
+#define ANALOG_PIN A1          
+#define LED_PIN LED_BUILTIN    
+#define MAGNITUDE_THRESHOLD 15 
+
+double vReal[SAMPLES];
+double vImag[SAMPLES];
+ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, SAMPLES, SAMPLING_FREQ);
+
 // Define the LED pin
 const int led = 25;  // Pico's built-in LED
 
@@ -200,15 +211,15 @@ void smoothServoMove(Servo &servo, int startAngle, int endAngle, int stepDelay) 
 }
 
 void servoRelease(){
-  // myservo.write(45);
-  int currentAngle = myservo.read();  // Get the current position of the servo
-  smoothServoMove(myservo, currentAngle, 40, 10);  // Move smoothly to 45 degrees
+  myservo.write(40);
+  // int currentAngle = myservo.read();  // Get the current position of the servo
+  // smoothServoMove(myservo, currentAngle, 40, 10);  // Move smoothly to 45 degrees
 }
 
 void servoArm(){
-  // myservo.write(80);
-  int currentAngle = myservo.read();  // Get the current position of the servo
-  smoothServoMove(myservo, currentAngle, 80, 10);  // Move smoothly to 80 degrees
+  myservo.write(80);
+  // int currentAngle = myservo.read();  // Get the current position of the servo
+  // smoothServoMove(myservo, currentAngle, 80, 10);  // Move smoothly to 80 degrees
 }
 
 void servoCycleBall(){
@@ -252,7 +263,7 @@ bool isGolfBall(){
 
   long RangeInCentimeters;
   RangeInCentimeters = ultrasonic.read();
-  if (RangeInCentimeters > 0 && RangeInCentimeters <=4){
+  if (RangeInCentimeters > 0 && RangeInCentimeters <=6){
     digitalWrite(beam_breakLED, HIGH);
     return true;
   }
@@ -292,6 +303,38 @@ bool isServoButton(){     //Remove when confirmed not needed
   }
 }
 
+bool isBallHit(){
+  for (int i = 0; i < SAMPLES; i++) {
+    vReal[i] = analogRead(ANALOG_PIN);
+    vImag[i] = 0;
+    delayMicroseconds(1000000 / SAMPLING_FREQ);
+  }
+
+  FFT.windowing(vReal, SAMPLES, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
+  FFT.compute(vReal, vImag, SAMPLES, FFT_FORWARD);
+  FFT.complexToMagnitude(vReal, vImag, SAMPLES);
+
+  bool hitDetected = false;
+  double hitFrequency = 0;
+  double hitMagnitude = 0;
+
+  for (int i = 2; i < SAMPLES / 2; i++) {
+    double freq = (i * 1.0 * SAMPLING_FREQ) / SAMPLES;
+
+    if (freq >= 1500 && freq <= 3000 && vReal[i] > MAGNITUDE_THRESHOLD) {
+      hitFrequency = freq;
+      hitMagnitude = vReal[i];
+      hitDetected = true;
+
+      // Serial.print("Freq: ");
+      // Serial.print(freq);
+      // Serial.print("  vReal: ");
+      // Serial.println(vReal[i]);
+      return true;
+    }
+  }
+  return false;
+}
 void testDistance(){
   while(1){
     if (ballRequested()){
@@ -324,10 +367,10 @@ void setup() {
 
   digitalWrite(pico_readyLED, HIGH);
   while(!isStart()){
-    delay(20);
+    // delay(20);
     Serial.println("Waiting for Start Button");
     main_button = digitalRead(gp21);
-    blinkLED(4, 50);
+    blinkLED(1, 50);
     // Serial.println(main_button);
     // start_flag = digitalRead(start_button);
     // Serial.println(start_flag);
@@ -343,62 +386,54 @@ void setup() {
 
 
 void loop() {
-  
-  if (isGolfBall()){
+  if (isGolfBall()) {
     stopMotor();
-
-  }
-  else{
+  } else {
     runMotor(1);
   }
-  
-  
+
   // Check if a ball is requested and enough time has passed since last servo cycle
-  if (ballRequested()) {  // && isGolfBall()
-      unsigned long currentMillis = millis(); // Get current time
-      if (currentMillis - lastServoTime >= 3000) { // Check if 3 seconds have passed
-          digitalWrite(pico_readyLED, LOW);
-          servoCycleBall();
-          lastServoTime = currentMillis; // Update last execution time
-          digitalWrite(pico_readyLED, HIGH);
-      }
+  if (ballRequested()) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastServoTime >= 3000) {
+      digitalWrite(pico_readyLED, LOW);
+      servoCycleBall();
+      lastServoTime = currentMillis;
+      digitalWrite(pico_readyLED, HIGH);
+    }
   }
 
-  if (isKillMotor()){
-    // cycleRelays();    //Run in seperate thread eventually so it doesn't prevent servo cycle
+  // if (isBallHit()) {
+  //   digitalWrite(pico_readyLED, LOW);
+  //   servoCycleBall();
+  //   digitalWrite(pico_readyLED, HIGH);
+  // }
 
+  if (isKillMotor()) {
     stopMotor();
     delay(1000);
-    while (!isKillMotor()){
-      // kill_motor_flag = digitalRead(kill_motor_button);
-      if (ballRequested()){
+    while (!isKillMotor()) {
+      if (ballRequested() || isBallHit()) {
         digitalWrite(pico_readyLED, LOW);
         servoCycleBall();
         digitalWrite(pico_readyLED, HIGH);
       }
-      delay(20);
     }
-    digitalWrite(pico_readyLED, LOW); //delay to prevent button bounce back into this loop
+    digitalWrite(pico_readyLED, LOW);
     delay(2000);
     digitalWrite(pico_readyLED, HIGH);
   }
 
-  if (isStart()){
+  if (isStart()) {
     stopMotor();
     delay(1000);
-    while (!isStart()){
-      // start_flag = digitalRead(start_button);
-      isGolfBall();
-      delay(20);
-      blinkLED(4, 50);
+    while (!isStart()) {
+      if (isBallHit()) {
+        blinkLED(4, 50);
+      }
     }
-    digitalWrite(pico_readyLED, LOW); //delay to prevent button bounce back into this loop
+    digitalWrite(pico_readyLED, LOW);
     delay(2000);
     digitalWrite(pico_readyLED, HIGH);
   }
-  
-  delay(20);
-  // kill_motor_flag = digitalRead(kill_motor_button);
-  // start_flag = digitalRead(start_button);
-  
 }

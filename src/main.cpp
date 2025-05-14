@@ -9,7 +9,7 @@
 #define SAMPLING_FREQ 10000    
 #define ANALOG_PIN A1          
 #define LED_PIN LED_BUILTIN    
-#define MAGNITUDE_THRESHOLD 15 
+#define MAGNITUDE_THRESHOLD 35 
 
 double vReal[SAMPLES];
 double vImag[SAMPLES];
@@ -211,13 +211,13 @@ void smoothServoMove(Servo &servo, int startAngle, int endAngle, int stepDelay) 
 }
 
 void servoRelease(){
-  myservo.write(40);
+  myservo.write(45);
   // int currentAngle = myservo.read();  // Get the current position of the servo
   // smoothServoMove(myservo, currentAngle, 40, 10);  // Move smoothly to 45 degrees
 }
 
 void servoArm(){
-  myservo.write(80);
+  myservo.write(85);
   // int currentAngle = myservo.read();  // Get the current position of the servo
   // smoothServoMove(myservo, currentAngle, 80, 10);  // Move smoothly to 80 degrees
 }
@@ -249,49 +249,51 @@ bool isStart(){
   }
 }
 
-bool isGolfBall(){
-  // sensorState = digitalRead(beam_data);
-  // sensorState = digitalRead(beam_data2);
-  // if (sensorState == LOW) {     
-  //   digitalWrite(beam_breakLED, HIGH);
-  //   return true;
-  // } 
-  // else{
-  //   digitalWrite(beam_breakLED, LOW);
-  //   return false;
-  // }
+// bool isGolfBall(){
 
-  long RangeInCentimeters;
-  RangeInCentimeters = ultrasonic.read();
-  if (RangeInCentimeters > 0 && RangeInCentimeters <=6){
-    digitalWrite(beam_breakLED, HIGH);
-    return true;
+
+//   long RangeInCentimeters;
+//   RangeInCentimeters = ultrasonic.read();
+//   if (RangeInCentimeters > 0 && RangeInCentimeters <=6){
+//     digitalWrite(beam_breakLED, HIGH);
+//     return true;
+//   }
+//   else{
+//     digitalWrite(beam_breakLED, LOW);
+//     return false;
+//   }
+
+// }
+#define HISTORY_SIZE 1000
+
+bool isGolfBall() {
+  static bool lastState = false;
+  static bool readingHistory[HISTORY_SIZE] = {false};
+  static int index = 0;
+  static int passCount = 0;
+
+  // Take a reading
+  long range = ultrasonic.read();
+  bool isPass = (range > 0 && range <= 3);
+
+  // Update the history ring buffer
+  if (readingHistory[index]) passCount--;       // remove old value from count
+  if (isPass) passCount++;                      // add new value to count
+  readingHistory[index] = isPass;
+  index = (index + 1) % HISTORY_SIZE;
+
+  // Determine new state based on majority
+  bool newState = (passCount > HISTORY_SIZE / 2);
+
+  // Only change the LED if state changes
+  if (newState != lastState) {
+    digitalWrite(beam_breakLED, newState ? HIGH : LOW);
+    lastState = newState;
   }
-  else{
-    digitalWrite(beam_breakLED, LOW);
-    return false;
-  }
-  // // read the state of the pushbutton value:
-  // sensorState = digitalRead(beam_data);
-  // // check if the sensor beam is blocked
-  // // if it is, the sensorState is LOW:
-  // if (sensorState == LOW) {     
-  //   // turn LED on:
-  //   digitalWrite(led, HIGH);  
-  // } 
-  // else {
-  //   // turn LED off:
-  //   digitalWrite(led, LOW); 
-  // }
-  
-  // if (sensorState && !lastState) {
-  //   Serial.println("Unbroken");
-  // } 
-  // if (!sensorState && lastState) {
-  //   Serial.println("Broken");
-  // }
-  // lastState = sensorState;
+
+  return lastState;
 }
+
 
 bool isServoButton(){     //Remove when confirmed not needed
   sensorState = digitalRead(gp21);
@@ -321,7 +323,7 @@ bool isBallHit(){
   for (int i = 2; i < SAMPLES / 2; i++) {
     double freq = (i * 1.0 * SAMPLING_FREQ) / SAMPLES;
 
-    if (freq >= 1500 && freq <= 3000 && vReal[i] > MAGNITUDE_THRESHOLD) {
+    if (freq >= 2000 && freq <= 3000 && vReal[i] > MAGNITUDE_THRESHOLD) {
       hitFrequency = freq;
       hitMagnitude = vReal[i];
       hitDetected = true;

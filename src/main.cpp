@@ -3,6 +3,8 @@
 #include "sms812.h"
 #include "Ultrasonic.h"
 #include "arduinoFFT.h"
+#include <Wire.h>
+#include "Adafruit_VL6180X.h"
 
 // FFT Definitions and Constants
 #define SAMPLES 64             
@@ -14,6 +16,9 @@
 double vReal[SAMPLES];
 double vImag[SAMPLES];
 ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, SAMPLES, SAMPLING_FREQ);
+
+TwoWire myWire(20, 21); // SDA = GP0, SCL = GP1
+Adafruit_VL6180X vl = Adafruit_VL6180X();
 
 // Define the LED pin
 const int led = 25;  // Pico's built-in LED
@@ -46,7 +51,7 @@ const int servo = 8;
 
 //Beam Break Sensors
 const int beam_data = 9;
-const int beam_data2 = 10; //Not Used
+const int beam_data2 = 10; 
 
 //ultrasonic Sensor
 Ultrasonic ultrasonic(10);
@@ -139,6 +144,66 @@ void initializeUltrasonic(){
   pinMode(beam_data2, INPUT_PULLUP);
 }
 
+void initializeTOF(){
+  myWire.begin();
+
+  Serial.println("Adafruit VL6180x test!");
+  if (!vl.begin(&myWire)) {
+    Serial.println("Failed to find sensor");
+  }
+  Serial.println("Sensor found!");
+}
+
+// void checkTOF(){
+//   float lux = vl.readLux(VL6180X_ALS_GAIN_5);
+
+//   uint8_t range = vl.readRange();
+//   uint8_t status = vl.readRangeStatus();
+
+//   if (status == VL6180X_ERROR_NONE) {
+//     Serial.print("Range: "); Serial.println(range);
+
+//     if (range < 50) {
+//       digitalWrite(LED_PIN, HIGH);
+//     } else {
+//       digitalWrite(LED_PIN, LOW);
+//     }
+//   } else {
+//     digitalWrite(LED_PIN, LOW); // turn off LED on error
+//   }
+
+//   // Print error messages
+//   if  ((status >= VL6180X_ERROR_SYSERR_1) && (status <= VL6180X_ERROR_SYSERR_5)) {
+//     Serial.println("System error");
+//   }
+//   else if (status == VL6180X_ERROR_ECEFAIL) {
+//     Serial.println("ECE failure");
+//   }
+//   else if (status == VL6180X_ERROR_NOCONVERGE) {
+//     Serial.println("No convergence");
+//   }
+//   else if (status == VL6180X_ERROR_RANGEIGNORE) {
+//     Serial.println("Ignoring range");
+//   }
+//   else if (status == VL6180X_ERROR_SNR) {
+//     Serial.println("Signal/Noise error");
+//   }
+//   else if (status == VL6180X_ERROR_RAWUFLOW) {
+//     Serial.println("Raw reading underflow");
+//   }
+//   else if (status == VL6180X_ERROR_RAWOFLOW) {
+//     Serial.println("Raw reading overflow");
+//   }
+//   else if (status == VL6180X_ERROR_RANGEUFLOW) {
+//     Serial.println("Range reading underflow");
+//   }
+//   else if (status == VL6180X_ERROR_RANGEOFLOW) {
+//     Serial.println("Range reading overflow");
+//   }
+
+//   delay(50);
+// }
+
 bool ballRequested(){
     int sensorValue = analogRead(dist_data);  // Read raw ADC value
     float voltage = sensorValue * (3.3 / 1023.0);  // Convert to voltage (assuming 10-bit ADC)
@@ -146,7 +211,7 @@ bool ballRequested(){
     // Convert voltage to distance using the sensor's characteristic curve (datasheet)
     float distance = 27.86 / (voltage - 0.42); // Example formula, may need adjustment
     
-    if (distance > 5 && distance <= 15) {  // Typical range for GP2Y0A41SK0F is 4-30 cm
+    if (distance > 5 && distance <= 13) {  // Typical range for GP2Y0A41SK0F is 4-30 cm
       Serial.print("Distance: ");
       Serial.print(distance);
       Serial.println(" cm");
@@ -267,31 +332,85 @@ bool isStart(){
 #define HISTORY_SIZE 1000
 
 bool isGolfBall() {
-  static bool lastState = false;
-  static bool readingHistory[HISTORY_SIZE] = {false};
-  static int index = 0;
-  static int passCount = 0;
+  // static bool lastState = false;
+  // static bool readingHistory[HISTORY_SIZE] = {false};
+  // static int index = 0;
+  // static int passCount = 0;
 
-  // Take a reading
-  long range = ultrasonic.read();
-  bool isPass = (range > 0 && range <= 3);
+  // // Take a reading
+  // long range = ultrasonic.read();
+  // bool isPass = (range > 0 && range <= 3);
 
-  // Update the history ring buffer
-  if (readingHistory[index]) passCount--;       // remove old value from count
-  if (isPass) passCount++;                      // add new value to count
-  readingHistory[index] = isPass;
-  index = (index + 1) % HISTORY_SIZE;
+  // // Update the history ring buffer
+  // if (readingHistory[index]) passCount--;       // remove old value from count
+  // if (isPass) passCount++;                      // add new value to count
+  // readingHistory[index] = isPass;
+  // index = (index + 1) % HISTORY_SIZE;
 
-  // Determine new state based on majority
-  bool newState = (passCount > HISTORY_SIZE / 2);
+  // // Determine new state based on majority
+  // bool newState = (passCount > HISTORY_SIZE / 2);
 
-  // Only change the LED if state changes
-  if (newState != lastState) {
-    digitalWrite(beam_breakLED, newState ? HIGH : LOW);
-    lastState = newState;
+  // // Only change the LED if state changes
+  // if (newState != lastState) {
+  //   digitalWrite(beam_breakLED, newState ? HIGH : LOW);
+  //   lastState = newState;
+  // }
+
+  // return lastState;
+
+  // float lux = vl.readLux(VL6180X_ALS_GAIN_5);
+  bool isBallDetected = false;
+
+  uint8_t range = vl.readRange();
+  uint8_t status = vl.readRangeStatus();
+  
+
+  if (status == VL6180X_ERROR_NONE) {
+    Serial.print("Range: "); Serial.println(range);
+
+    if (range <= 50) {
+      // digitalWrite(LED_PIN, HIGH);
+      isBallDetected = true; // Ball detected if range is less than or equal to 50
+    } else {
+      // digitalWrite(LED_PIN, LOW);
+      isBallDetected = false; // No ball detected if range is greater than 50
+    }
+  } else {
+    // digitalWrite(LED_PIN, LOW); // turn off LED on error
+    isBallDetected = false; // No ball detected if range is greater than 50
   }
 
-  return lastState;
+  // Print error messages
+  if  ((status >= VL6180X_ERROR_SYSERR_1) && (status <= VL6180X_ERROR_SYSERR_5)) {
+    Serial.println("System error");
+  }
+  else if (status == VL6180X_ERROR_ECEFAIL) {
+    Serial.println("ECE failure");
+  }
+  else if (status == VL6180X_ERROR_NOCONVERGE) {
+    Serial.println("No convergence");
+  }
+  else if (status == VL6180X_ERROR_RANGEIGNORE) {
+    Serial.println("Ignoring range");
+  }
+  else if (status == VL6180X_ERROR_SNR) {
+    Serial.println("Signal/Noise error");
+  }
+  else if (status == VL6180X_ERROR_RAWUFLOW) {
+    Serial.println("Raw reading underflow");
+  }
+  else if (status == VL6180X_ERROR_RAWOFLOW) {
+    Serial.println("Raw reading overflow");
+  }
+  else if (status == VL6180X_ERROR_RANGEUFLOW) {
+    Serial.println("Range reading underflow");
+  }
+  else if (status == VL6180X_ERROR_RANGEOFLOW) {
+    Serial.println("Range reading overflow");
+  }
+
+  return isBallDetected;
+
 }
 
 
@@ -362,6 +481,7 @@ void setup() {
   initializeServo();
   initializeLED();
   initializeButtonBox();
+  initializeTOF();
   servoArm();
 
   // blinkLED(4, 200);
